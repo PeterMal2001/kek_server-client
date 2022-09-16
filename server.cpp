@@ -12,9 +12,6 @@
 
 using namespace std;
 
-//global descryptor for socket
-int sd,tc=0;
-
 mutex keklock;
 
 //handler for Ctrl+C
@@ -23,15 +20,16 @@ void kekstop(int signum){
 	exit(0);
 }
 
-void talk(int id,char *ip){
+void ktr_talk(int id,char *ip){
 	cout<<"gay boy "<<ip<<" calling"<<endl;
 	keklock.lock();
 	char *msg;
 	int c;
-	msg=static_cast<char*>(malloc(1024));
+	msg=new char[1024];
 	keklock.unlock();
 	while((c=recv(id,msg,1024,0))>0){
 		cout<<ip<<" said: "<<msg<<" of "<<c<<endl;
+		send(id,msg,1024,0);
 	}
 	cout<<"end of "<<ip<<" call"<<endl;
 }
@@ -68,7 +66,7 @@ class keksock{
 		socklen_t junk;
 		err=0;
 		char *ip;
-		ip=static_cast<char*>(malloc(256));
+		ip=new char[256];
 		while(1){
 			if(listen(sd,5)<0){
 				err+=4;
@@ -76,14 +74,15 @@ class keksock{
 			}
 			ad=accept(sd,reinterpret_cast<sockaddr*>(&addr),&junk);
 			ip=inet_ntoa(addr.sin_addr);
-			thread thr(talk,ad,ip);
-			thr.detach();
+			thread read_thr(ktr_talk,ad,ip);
+			read_thr.detach();
 		}
 	}
 };
 
 int main(int argc, char** argv){
-	keksock lul(6666);
+	signal(SIGINT,kekstop);
+	keksock lul(atoi(argv[1]));
 	lul.monitor();
 	return 0;
 }
