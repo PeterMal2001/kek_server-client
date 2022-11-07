@@ -1,5 +1,7 @@
 #include<iostream>
 #include<cstdlib>
+#include<sstream>
+
 #include<sys/types.h>
 #include<sys/socket.h>
 #include<netinet/in.h>
@@ -9,27 +11,13 @@
 #include<mutex>
 #include<pqxx/pqxx>
 
+#include"frames.hpp"
+
 #define MAX_THREADS 5
-#define MAX_HASH 16769023
-#define MAX_NAME 64
 
 using namespace std;
 
 mutex keklock;
-
-//powmod for D&F
-size_t powmod(size_t a,size_t b){
-	std::cout<<"powmod start\n";
-	int i;
-	for(i=0;i<b;i++){
-		a*=a;
-		if(a>MAX_HASH){
-			a%=MAX_HASH;
-		}
-	}
-	std::cout<<"powmod finish\n";
-	return a;
-}
 
 //check for legal symbols return 0 if good
 bool namecheck(char *name){
@@ -49,40 +37,45 @@ void kekstop(int signum){
 }
 
 //client-server communication
-void ktr_talk(int id,char *ip,pqxx::work *sql_work){
+void ktr_talk(int id,char *ip,pqxx::connection *sql_conn){
 	std::cout<<"gay boy "<<ip<<" calling"<<endl;
 	keklock.lock();
-	char *login,ans;
+	char ans,*cstr;
+	std::string str;
 	size_t base,hash_pass,code;
 	bool is_authorised=0;
-	int action_id;
+	int action_id,auth_id,i;
+	pqxx::work *sql_work;
 	pqxx::result res;
 	std::stringstream cmd;
+	id_frame usr_id;
+	msg_frame msg;
+	msg_header_frame msg_header;
+	msglist_frame *msglist;
 	keklock.unlock();
 	//handshake
 	// recv(id,&base,sizeof(size_t),0);
 	// recv(id,&code,sizeof(size_t),0);
 	//service cycle
 	while(1){
+		sql_work=new pqxx::work(*sql_conn);
 		//get action id
 		if(!(recv(id,&ans,1,0))) break;
 		action_id=ans;
 		std::cout<<action_id<<"\n";
 		//register
 		if(ans==0){
-			keklock.lock();
-			login=new char[MAX_NAME];
-			keklock.unlock();
-			if(!(recv(id,login,64,0))) break;
-			if(!(recv(id,&hash_pass,sizeof(size_t),0))) break;
-
-			cmd<<"select hash_pass from users where name=\'"<<login<<"\'";
+			if(!(recv(id,&usr_id,sizeof(id_frame),0))) break;
+			std::cout<<usr_id.name<<" "<<usr_id.hash_pass<<"\n";
+			
+			//sql name collision check
+			cmd<<"select hash_pass from users where name=\'"<<usr_id.name<<"\';";
 			keklock.lock();
 			res=sql_work->exec(cmd);
 			keklock.unlock();
 			cmd.str("");
 
-			if(namecheck(login)){
+			if(namecheck(usr_id.name)){
 				std::cout<<"Illegal name\n";
 				ans=2;
 			}
@@ -91,48 +84,110 @@ void ktr_talk(int id,char *ip,pqxx::work *sql_work){
 				ans=1;
 			}
 			else{
-				cmd<<"insert into users(name,hash_pass) values (\'"<<login<<"\',"<<hash_pass<<")";
+				cmd<<"insert into users(name,hash_pass) values (\'"<<usr_id.name<<"\',"<<usr_id.hash_pass<<");";
 				keklock.lock();
 				res=sql_work->exec(cmd);
 				keklock.unlock();
 				cmd.str("");
-				std::cout<<"Registration "<<login<<" with password "<<hash_pass<<"\n";
+				std::cout<<"Registration "<<usr_id.name<<" with password "<<usr_id.hash_pass<<"\n";
 				ans=0;
 			}
+			//send answer
 			send(id,&ans,1,0);
 		}
 		//authorisate
 		else if(ans==1){
+			std::cout<<"recv\n";
+			if(!(usr_id.recv_frame(id))) break;
+			//sql login and password check
 			keklock.lock();
-			login=new char[MAX_NAME];
-			keklock.unlock();
-			if(!(recv(id,login,64,0))) break;
-			if(!(recv(id,&hash_pass,sizeof(size_t),0))) break;
-			//check
-			keklock.lock();
-			cmd<<"select hash_pass from users where name=\'"<<login<<"\'";
+			cmd<<"select id,hash_pass from users where name=\'"<<usr_id.name<<"\';";
+			std::cout<<cmd.str()<<"\n";
 			res=sql_work->exec(cmd);
-			cmd.str("");
 			keklock.unlock();
+			cmd.str("");
+			std::cout<<cmd.str()<<"\n";
+			std::cout<<"selected "<<res.size()<<"\n";
 
-			std::cout<<"Login attempt "<<login<<" with password "<<hash_pass<<"... ";
-			if((res.size()==1)&&(hash_pass==res[0][0].as<size_t>())){
+			std::cout<<"Login attempt "<<usr_id.name<<" with password "<<usr_id.hash_pass<<"... ";
+			if((res.size()==1)&&(usr_id.hash_pass==res[0][1].as<size_t>())){
 				ans=0;
 				is_authorised=1;
-				std::cout<<"accepted\n";
+				auth_id=res[0][0].as<int>();
+				std::cout<<"accepted id:"<<auth_id<<"\n";
 			}
 			else{
 				ans=1;
 				std::cout<<"denied\n";
 			}
+			//send answer
 			send(id,&ans,1,0);
 		}
+		//view incoming list
+		else if(ans==2){
+			if(!is_authorised){
+				std::cout<<"Not authorised\n";
+				break;
+			}
+
+			keklock.lock();
+			cmd<<"SELECT id,sender_id,msg_title,send_time \
+			FROM messages \
+			WHERE id IN (SELECT id FROM message_receivers WHERE receiver_id="<<auth_id<<");";
+			res=sql_work->exec(cmd);
+			keklock.unlock();
+			std::cout<<"sql done\n";
+
+			msglist=new msglist_frame(res.size());
+			cstr=new char[MAX_TITLE];
+			for(i=0;i<res.size();i++){
+				strcpy(cstr,res[i][2].as<std::string>().c_str());
+				std::cout<<"add "<<i<<" "<<res[i][0].as<int>()<<" "<<res[i][1].as<int>()<<" "<<1<<" "<<cstr<<" "<<res[i][3].as<time_t>()<<"\n";
+				msg_header.setup(res[i][0].as<int>(),res[i][1].as<int>(),1,cstr,res[i][3].as<time_t>(),&auth_id);
+				msglist->add(msg_header);
+			}
+			std::cout<<"add end\n";
+			msglist->print();
+			msglist->send_frame(id);
+		}
+		//send msg
+		else if(ans==3){
+			if(!is_authorised){
+				std::cout<<"Not authorised\n";
+				break;
+			}
+			if(!(msg.recv_frame(id))) break;
+			msg.print();
+			msg.sender_id=auth_id;
+
+			cmd<<"insert into messages(sender_id,msg_title,send_time,msg_text) values ("<<msg.sender_id<<",\'"<<msg.title<<"\',"<<msg.time<<",\'"<<msg.text<<"\') returning id;";
+			std::cout<<"cmd made\n";
+			keklock.lock();
+			res=sql_work->exec(cmd);
+			keklock.unlock();
+			cmd.str("");
+			std::cout<<res.size()<<"\n";
+			msg.id=res[0][0].as<int>();
+			std::cout<<"sql msg "<<msg.id<<" insert done\n";
+
+			for(i=0;i<msg.receivers_count;i++){
+				keklock.lock();
+				cmd<<"insert into message_receivers(msg_id,receiver_id) values ("<<msg.id<<","<<msg.receivers[i]<<");";
+				sql_work->exec(cmd);
+				cmd.str("");
+				keklock.unlock();
+			}
+			std::cout<<"Message sent\n";
+			ans=1;
+			send(id,&ans,1,0);
+		}
+		//invalid action
 		else{
 			std::cout<<"Incorrect action ID\n";
 			break;
 		}
+		sql_work->commit();
 	}
-	sql_work->commit();
 	std::cout<<"end of "<<ip<<" call"<<endl;
 }
 
@@ -140,30 +195,29 @@ void ktr_talk(int id,char *ip,pqxx::work *sql_work){
 class keksock{
 	private:
 	int sd,err;
-	pqxx::work *sql_work;
+	pqxx::connection *sql_conn;
 	
 	public:
 	keksock(char* address,int port,pqxx::connection *sql_conn){
 		struct sockaddr_in addr;
 		err=0;
-		//socket init
+		//socket
 		sd=socket(AF_INET,SOCK_STREAM,0);
 		if(sd<0){
 			err+=1;
 			perror("sock_init");
 		}
-		//address set
+		//bind
 		addr.sin_family=AF_INET;
 		addr.sin_addr.s_addr=inet_addr(address);
 		addr.sin_port=port;
-		//socket bind
 		if(bind(sd,reinterpret_cast<struct sockaddr*>(&addr),sizeof(addr))<0){
 			err+=2;
 			perror("sock_bind");
 		}
 		//psql work init
-		this->sql_work=new pqxx::work(*sql_conn);
-		std::cout<<"Done"<<endl;
+		this->sql_conn=sql_conn;
+		std::cout<<"Done\n";
 	}
 	int monitor(){
 		struct sockaddr_in addr;
@@ -172,6 +226,7 @@ class keksock{
 		err=0;
 		char *ip;
 		ip=new char[256];
+		//main cycle
 		while(1){
 			if(listen(sd,MAX_THREADS)<0){
 				err+=4;
@@ -179,17 +234,18 @@ class keksock{
 			}
 			ad=accept(sd,reinterpret_cast<sockaddr*>(&addr),&junk);
 			ip=inet_ntoa(addr.sin_addr);
-			thread read_thr(ktr_talk,ad,ip,sql_work);
+			thread read_thr(ktr_talk,ad,ip,sql_conn);
 			read_thr.detach();
 		}
 	}
 };
 
 int main(int argc, char** argv){
-	if(SIZE_MAX<MAX_HASH){
-		std::cout<<"size_t is too small!\n";
-		return -1;
-	}
+	//startup check
+	// if(SIZE_MAX<MAX_HASH){
+	// 	std::cout<<"size_t is too small!\n";
+	// 	return -1;
+	// }
 	if(argc!=3){
 		std::cout<<"Using ./server [address] [port]\n";
 		return -1;
@@ -203,7 +259,9 @@ int main(int argc, char** argv){
 		perror(e.what());
 		return -1;
 	}
+	//signal setup
 	signal(SIGINT,kekstop);
+	//main class init
 	keksock lul(argv[1],atoi(argv[2]),sql_conn);
 	lul.monitor();
 	return 0;

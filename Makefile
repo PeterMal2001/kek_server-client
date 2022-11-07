@@ -9,6 +9,10 @@ client:
 clean:
 	@rm server ||:
 	@rm client ||:
+	
 tap_iface:
 	sudo ip tuntap add dev tap0 mode tap
 	sudo ip a add dev tap0 166.0.0.1/8
+
+git_add:
+	git add server.cpp frames.hpp client.cpp Makefile
