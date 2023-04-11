@@ -15,4 +15,4 @@ tap_iface:
 	sudo ip a add dev tap0 166.0.0.1/8
 
 git_add:
-	git add server.cpp frames.hpp client.cpp Makefile
+	git add server.cpp frames.hpp crypto.hpp client.cpp ThreeFish.hpp Makefile

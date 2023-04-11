@@ -14,7 +14,7 @@ int main(int argc, char **argv){
         return -1;
     }
     //socket
-    int sd;
+    int64_t sd;
     size_t pass_hash;
     struct sockaddr_in addr;
     sd=socket(AF_INET,SOCK_STREAM,0);
@@ -31,41 +31,56 @@ int main(int argc, char **argv){
         return 1;
     }
     //operations
-    int a,id,*recvrs,i;
-    char com,*str1,*str2;
+    int64_t a,id,*recvrs,i;
+    char *str1,*str2;
+    char_frame com;
+    int_frame icom;
     time_t cur_time;
     std::string str;
     size_t hash_pass,base,code;
-    std::hash<std::string> str_hash;
     id_frame usr_id;
     msg_frame msg;
     msglist_frame msglist;
+    //diffy-hellman
+    TFKey ka,key,kmod(19662,16582360881486924019,5082632028705998950,895695448175102663);
+    tfkey_frame keyframe;
+    key.set_random();
+    keyframe.data=key;
+    keyframe.send_frame(sd);
+    ka.set_random();
+    keyframe.data=TFKey::pow_mod(key,ka,kmod);
+    keyframe.send_frame(sd);
+    keyframe.recv_frame(sd);
+    key=TFKey::pow_mod(keyframe.data,ka,kmod);
+    key.print("key");
     //service cycle
     while(1){
+        //shit for piping cin from file
+        if(cin.eof()) break;
+        std::cout<<"0 - register, 1 - authorisate, 2 - incoming list, 3 - send, 4 - view msg\n";
         std::cin>>a;
-        com=a;
-        send(sd,&com,1,0);
+        com.data=a;
+        com.send_frame(sd,key);
         //registration
         if(a==0){
             str1=new char[MAX_NAME];
-            str2=new char[64];
+            str2=new char[MAX_PASS];
             //frame setup
             std::cin>>str1;
             std::cin>>str2;
-            hash_pass=str_hash(string(str2));
-            usr_id.setup(str1,hash_pass);
-            std::cout<<usr_id.name<<" "<<hash_pass<<" "<<usr_id.hash_pass<<"\n";
+            usr_id.setup(str1,str2);
+            std::cout<<usr_id.name<<" "<<hash_pass<<" "<<usr_id.pass<<"\n";
             //frame send
-            send(sd,&usr_id,sizeof(id_frame),0);
+            usr_id.send_frame(sd,key);
             //answer recv
-            recv(sd,&com,1,0);
-            if(com==0){
+            com.recv_frame(sd,key);
+            if(com.data==0){
                 std::cout<<"Registered\n";
             }
-            else if(com==1){
+            else if(com.data==1){
                 std::cout<<"Existing name\n";
             }
-            else if(com==2){
+            else if(com.data==2){
                 std::cout<<"Incorrect name\n";
             }
             else{
@@ -75,20 +90,19 @@ int main(int argc, char **argv){
         //authorization
         else if(a==1){
             str1=new char[MAX_NAME];
-            str2=new char[64];
+            str2=new char[MAX_PASS];
             //frame setup
             std::cin>>str1;
             std::cin>>str2;
-            hash_pass=str_hash(string(str2));
-            usr_id.setup(str1,hash_pass);
+            usr_id.setup(str1,str2);
             //frame send
-            usr_id.send_frame(sd);
+            usr_id.send_frame(sd,key);
             //answer recv
-            recv(sd,&com,1,0);
-            if(com==0){
+            com.recv_frame(sd,key);
+            if(com.data==0){
                 std::cout<<"Accepted\n";
             }
-            else if(com==1){
+            else if(com.data==1){
                 std::cout<<"Rejected\n";
             }
             else{
@@ -97,31 +111,43 @@ int main(int argc, char **argv){
         }
         //view incoming list
         else if(a==2){
-            msglist.recv_frame(sd);
+            msglist.recv_frame(sd,key);
             msglist.print();
         }
         //send message
         else if(a==3){
             std::cin>>a;
-            recvrs=new int[a];
+            recvrs=new int64_t[a];
             for(i=0;i<a;i++){
                 std::cin>>recvrs[i];
             }
-            str2=new char[MAX_MSG];
             str1=new char[MAX_TITLE];
+            str2=new char[MAX_TEXT];
             std::cin >> std::ws;
             getline(std::cin,str);
             std::strcpy(str1,str.c_str());
             getline(std::cin,str);
             std::strcpy(str2,str.c_str());
             cur_time=time(NULL);
-            msg.setup(0,0,a,str1,cur_time,recvrs,str2);
+            msg.setup(0,0,a,str1,cur_time,recvrs,0,str2);
             msg.print();
-            msg.send_frame(sd);
+            msg.send_frame(sd,key);
             recv(sd,&com,1,0);
-            if(com==1){
+            if(com.data==0){
                 std::cout<<"Message sent\n";
             }
+            else{
+                std::cout<<"Error\n";
+            }
+        }
+        //view message
+        else if(a==4){
+            std::cin>>a;
+            icom.data=a;
+            std::cout<<icom.data;
+            icom.send_frame(sd,key);
+            msg.recv_frame(sd,key);
+            msg.print();
         }
         else break;
     }
