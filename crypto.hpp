@@ -285,7 +285,10 @@ class TFKey{
     }
 };
 
-void key_change(TFKey& key){}
+void key_change(TFKey& key){
+    TFKey kmod(19662,16582360881486924019,5082632028705998950,895695448175102663),incr(0,0,0,17);
+    key=TFKey::pow_mod(key,incr,kmod);
+}
 
 TFKey make_crc(char* data, size_t size){
     size_t i,j,rnds=size/sizeof(TFKey);

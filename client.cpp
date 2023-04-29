@@ -37,7 +37,7 @@ int main(int argc, char **argv){
     int_frame icom;
     time_t cur_time;
     std::string str;
-    size_t hash_pass,base,code;
+    size_t base,code;
     id_frame usr_id;
     msg_frame msg;
     msglist_frame msglist;
@@ -54,13 +54,27 @@ int main(int argc, char **argv){
     key=TFKey::pow_mod(keyframe.data,ka,kmod);
     key.print("key");
     //service cycle
+    #define SEND_FRAME(kframe) do{\
+		if(!(kframe.send_frame(sd,key))){\
+			return -1;\
+		}\
+        key_change(key);\
+        key.print("key_change");\
+	} while(0);
+    #define RECV_FRAME(kframe) do{\
+		if(!(kframe.recv_frame(sd,key))){\
+			return -1;\
+		}\
+        key_change(key);\
+        key.print("key_change");\
+	} while(0);
     while(1){
         //shit for piping cin from file
         if(cin.eof()) break;
         std::cout<<"0 - register, 1 - authorisate, 2 - incoming list, 3 - send, 4 - view msg\n";
         std::cin>>a;
         com.data=a;
-        com.send_frame(sd,key);
+        SEND_FRAME(com);
         //registration
         if(a==0){
             str1=new char[MAX_NAME];
@@ -69,11 +83,11 @@ int main(int argc, char **argv){
             std::cin>>str1;
             std::cin>>str2;
             usr_id.setup(str1,str2);
-            std::cout<<usr_id.name<<" "<<hash_pass<<" "<<usr_id.pass<<"\n";
+            std::cout<<usr_id.name<<" "<<usr_id.pass<<"\n";
             //frame send
-            usr_id.send_frame(sd,key);
+            SEND_FRAME(usr_id);
             //answer recv
-            com.recv_frame(sd,key);
+            RECV_FRAME(com);
             if(com.data==0){
                 std::cout<<"Registered\n";
             }
@@ -96,9 +110,9 @@ int main(int argc, char **argv){
             std::cin>>str2;
             usr_id.setup(str1,str2);
             //frame send
-            usr_id.send_frame(sd,key);
+            SEND_FRAME(usr_id);
             //answer recv
-            com.recv_frame(sd,key);
+            RECV_FRAME(com);
             if(com.data==0){
                 std::cout<<"Accepted\n";
             }
@@ -111,7 +125,7 @@ int main(int argc, char **argv){
         }
         //view incoming list
         else if(a==2){
-            msglist.recv_frame(sd,key);
+            RECV_FRAME(msglist);
             msglist.print();
         }
         //send message
@@ -131,8 +145,8 @@ int main(int argc, char **argv){
             cur_time=time(NULL);
             msg.setup(0,0,a,str1,cur_time,recvrs,0,str2);
             msg.print();
-            msg.send_frame(sd,key);
-            recv(sd,&com,1,0);
+            SEND_FRAME(msg);
+            RECV_FRAME(com);
             if(com.data==0){
                 std::cout<<"Message sent\n";
             }
@@ -145,8 +159,8 @@ int main(int argc, char **argv){
             std::cin>>a;
             icom.data=a;
             std::cout<<icom.data;
-            icom.send_frame(sd,key);
-            msg.recv_frame(sd,key);
+            SEND_FRAME(icom);
+            RECV_FRAME(msg);
             msg.print();
         }
         else break;

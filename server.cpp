@@ -57,23 +57,53 @@ class talk_thread{
 	bool is_authorised=0;
 	pqxx::connection *sql_conn;
 	pqxx::work *sql_work;
-	std::hash<std::string> str_hash;
 	
 	#define RECV_FRAME(kframe) do{\
+	keklock.lock();\
+	if(!(kframe.recv_frame(this->id))){\
+		keklock.unlock();\
+		return -1;\
+	}\
+	keklock.unlock();\
+	} while(0);
+	#define SEND_FRAME(kframe) do{\
 		keklock.lock();\
-		if(!(kframe.recv_frame(this->id,this->key))){\
+		if(!(kframe.send_frame(this->id))){\
 			keklock.unlock();\
 			return -1;\
 		}\
 		keklock.unlock();\
 	} while(0);
-	#define SEND_FRAME(kframe) do{\
-		keklock.lock();\
-		if(!(kframe.send_frame(this->id,this->key))){\
-			keklock.unlock();\
+	int64_t diffy_hellman(){
+		TFKey ka,key,kmod(19662,16582360881486924019,5082632028705998950,895695448175102663);
+		tfkey_frame keyframe;
+		ka.set_random();
+		RECV_FRAME(keyframe);
+		key=TFKey::pow_mod(keyframe.data,ka,kmod);
+		RECV_FRAME(keyframe);
+		ka=TFKey::pow_mod(keyframe.data,ka,kmod);
+		keyframe.data=key;
+		SEND_FRAME(keyframe);
+		key=ka;
+		key.print("key");
+		this->key=key;
+		return 0;
+	}
+	#undef RECV_FRAME
+	#undef SEND_FRAME
+	#define RECV_FRAME(kframe) do{\
+		if(!(kframe.recv_frame(this->id,this->key))){\
 			return -1;\
 		}\
-		keklock.unlock();\
+		key_change(key);\
+        key.print("key_change");\
+	} while(0);
+	#define SEND_FRAME(kframe) do{\
+		if(!(kframe.send_frame(this->id,this->key))){\
+			return -1;\
+		}\
+		key_change(key);\
+        key.print("key_change");\
 	} while(0);
 	#define EXEC(res) do{\
 		keklock.lock();\
@@ -107,14 +137,12 @@ class talk_thread{
 			ans.data=1;
 		}
 		else{
-			int64_t hash_pass=str_hash(usr_id.pass);
-			cmd<<"insert into users(name,hash_pass) values (\'"<<usr_id.name<<"\',"<<hash_pass<<");";
-			keklock.lock();
-			res=sql_work->exec(cmd);
-			keklock.unlock();
-			cmd.str("");
+			TFKey hash_pass=make_crc(usr_id.name,MAX_NAME)+make_crc(usr_id.pass,MAX_PASS);
+			cmd<<"insert into users(name,hash_pass) values (\'"<<usr_id.name<<"\',\'{"<<(int64_t)hash_pass.get_data(3)<<","<<(int64_t)hash_pass.get_data(2)<<","<<(int64_t)hash_pass.get_data(1)<<","<<(int64_t)hash_pass.get_data(0)<<"}\');";
+			EXEC(res);
 
 			std::cout<<"Registration "<<usr_id.name<<" with password "<<usr_id.pass<<"\n";
+			hash_pass.print("hash_pass");
 			ans.data=0;
 		}
 		//send answer
@@ -135,16 +163,17 @@ class talk_thread{
 		}
 
 		//sql login and password check
-		cmd<<"select id,hash_pass from users where name=\'"<<usr_id.name<<"\';";
+		cmd<<"select id,hash_pass[1],hash_pass[2],hash_pass[3],hash_pass[4] from users where name=\'"<<usr_id.name<<"\';";
 		std::cout<<cmd.str()<<"\n";
 		EXEC(res);
 
 		std::cout<<cmd.str()<<"\n";
 		std::cout<<"selected "<<res.size()<<"\n";
 
-		int64_t hash_pass=str_hash(usr_id.pass);
-		std::cout<<"Login attempt "<<usr_id.name<<" with password "<<hash_pass<<"... ";
-		if((res.size()==1)&&(hash_pass==res[0][1].as<int64_t>())){
+		TFKey hash_pass=make_crc(usr_id.name,MAX_NAME)+make_crc(usr_id.pass,MAX_PASS);
+		hash_pass.print("hash_pass");
+		std::cout<<"Login attempt "<<usr_id.name<<" with password "<<usr_id.pass<<"... ";
+		if((res.size()==1)&&(hash_pass==TFKey((u_int64_t)(res[0][1].as<int64_t>()),(u_int64_t)(res[0][2].as<int64_t>()),(u_int64_t)(res[0][3].as<int64_t>()),(u_int64_t)(res[0][4].as<int64_t>())))){
 			ans.data=0;
 			is_authorised=1;
 			auth_id=res[0][0].as<int>();
@@ -295,40 +324,9 @@ class talk_thread{
 
 		return 0;
 	}
-	#define RECV_FRAME(kframe) do{\
-		keklock.lock();\
-		if(!(kframe.recv_frame(this->id))){\
-			keklock.unlock();\
-			return -1;\
-		}\
-		keklock.unlock();\
-	} while(0);
-	#define SEND_FRAME(kframe) do{\
-		keklock.lock();\
-		if(!(kframe.send_frame(this->id))){\
-			keklock.unlock();\
-			return -1;\
-		}\
-		keklock.unlock();\
-	} while(0);
-	int64_t diffy_hellman(){
-		TFKey ka,key,kmod(19662,16582360881486924019,5082632028705998950,895695448175102663);
-		tfkey_frame keyframe;
-		ka.set_random();
-		RECV_FRAME(keyframe);
-		key=TFKey::pow_mod(keyframe.data,ka,kmod);
-		RECV_FRAME(keyframe);
-		ka=TFKey::pow_mod(keyframe.data,ka,kmod);
-		keyframe.data=key;
-		SEND_FRAME(keyframe);
-		key=ka;
-		key.print("key");
-		this->key=key;
-		return 0;
-	}
+	#undef EXEC
 	#undef RECV_FRAME
 	#undef SEND_FRAME
-	#undef EXEC
 
 	public:
 	int64_t is_active=0;
@@ -351,12 +349,11 @@ class talk_thread{
 		while(1){
 			sql_work=new pqxx::work(*sql_conn);
 			//get action id
-			keklock.lock();\
 			if(!(ans.recv_frame(this->id,this->key))){
-				keklock.unlock();
 				break;
 			}
-			keklock.unlock();
+			key_change(key);
+			key.print("key_change");
 			std::cout<<(int)ans.data<<"\n";
 			if(ans.data==0) e=this->registration();
 			else if(ans.data==1) e=this->authorisation();
