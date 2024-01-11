@@ -4,11 +4,8 @@
 #include<sys/types.h>
 #include<sys/socket.h>
 #include"crypto.hpp"
+#include"consts.hpp"
 
-#define MAX_NAME 64
-#define MAX_PASS 64
-#define MAX_TEXT 1024
-#define MAX_TITLE 64
 
 #define RECV(id,arg,size) do{\
     if(!(recv(id,arg,size,0))) return 0;\
@@ -39,6 +36,9 @@ class Blob{
         this->cur=0;
         this->is_encrypted=0;
     }
+    Blob(const Blob& b){
+        
+    }
 
     template<typename Data>
     void push(Data a){
@@ -64,6 +64,7 @@ class Blob{
         this->is_encrypted=1;
     }
     int64_t blob_send(int64_t id){
+        // std::cout<<"is encrypted "<<this->is_encrypted<<"\n";
         SEND(id,&(this->is_encrypted),sizeof(bool));
         if(this->is_encrypted){
             SEND(id,&(this->size),sizeof(size_t));
@@ -94,9 +95,12 @@ class Blob{
     void decrypt(TFKey key){
         CryptedStruct a(this->size);
         charcpy(a.data,this->data,this->size);
-        //no more room for initial vector
+        // std::cout<<this->size<<"\n";
+        //give no more room for initial vector
         this->size-=32;
+        delete[] this->data;
         this->data=new char[this->size];
+        // a.print("a");
         charcpy(this->data,TF_decrypt<char>(a,key),this->size);
         this->cur=0;
         this->size=pop<size_t>();
@@ -107,9 +111,9 @@ class Blob{
     }
     //checks crc of blob if written same as freshly made then returns 1 else 0
     bool check_crc(){
+        if(this->is_encrypted) return 0;
         TFKey rcrc=make_crc(this->data,this->size+sizeof(size_t));
-        this->crc.print("ccrc");
-        rcrc.print("rcrc");
+        //this->crc.print("ccrc");
         return this->crc==rcrc;
     }
     template<typename Data>
@@ -146,7 +150,7 @@ class Blob{
             }
         }
         std::cout<<"\n";
-        this->crc.print("crc");
+        //this->crc.print("crc");
     }
 
     private:
@@ -190,8 +194,16 @@ class char_frame{
         Blob blob(sizeof(char));
         blob.push<char>(this->data);
         blob.add_crc();
-        blob.print("char sent");
+        //blob.print("char sent");
         blob.encrypt(key);
+        BLOB_SEND(id);
+        return 1;
+    }
+    int64_t send_frame(int64_t id){
+        Blob blob(sizeof(char));
+        blob.push<char>(this->data);
+        blob.add_crc();
+        //blob.print("char sent no crypt");
         BLOB_SEND(id);
         return 1;
     }
@@ -199,7 +211,18 @@ class char_frame{
         Blob blob;
         BLOB_RECV(id);
         blob.decrypt(key);
-        blob.print("char recvd");
+        //blob.print("char recvd");
+        if(!blob.check_crc()){
+            std::cout<<"Damaged frame!\n";
+            return 0;
+        }
+        this->data=blob.pop<char>();
+        return 1;
+    }
+    int64_t recv_frame(int64_t id){
+        Blob blob;
+        BLOB_RECV(id);
+        //blob.print("char recvd");
         if(!blob.check_crc()){
             std::cout<<"Damaged frame!\n";
             return 0;
@@ -318,6 +341,18 @@ class msg_header_frame{
             this->receivers[i]=receivers[i];
         }
     }
+    void operator=(const msg_header_frame& b){
+        this->id=b.id;
+        this->sender_id=b.sender_id;
+        this->receivers_count=b.receivers_count;
+        this->receivers=new int64_t[this->receivers_count];
+        int i;
+        for(i=0;i<this->receivers_count;i++){
+            this->receivers[i]=b.receivers[i];
+        }
+        strcpy(this->title,b.title);
+        this->time=b.time;
+    }
     int64_t send_frame(int64_t id,TFKey key){
         Blob blob(this->header_size());
         this->push_header(blob);
@@ -348,7 +383,7 @@ class msg_header_frame{
         return (3+this->receivers_count)*sizeof(int64_t)+MAX_TITLE+sizeof(time_t);
     }
     void push_header(Blob& blob){
-        std::cout<<"push header\n";
+        //std::cout<<"push header\n";
         blob.push<int64_t>(this->id);
         blob.push<int64_t>(this->sender_id);
         blob.push<int64_t>(this->receivers_count);
@@ -357,7 +392,7 @@ class msg_header_frame{
         blob.push_array<int64_t>(this->receivers,this->receivers_count);
     }
     void pop_header(Blob& blob){
-        std::cout<<"pop header\n";
+        //std::cout<<"pop header\n";
         this->id=blob.pop<int64_t>();
         this->sender_id=blob.pop<int64_t>();
         this->receivers_count=blob.pop<int64_t>();
@@ -365,7 +400,7 @@ class msg_header_frame{
         this->time=blob.pop<time_t>();
         this->receivers=new int64_t[this->receivers_count];
         blob.pop_array<int64_t>(this->receivers,this->receivers_count);
-        this->print();
+        //this->print();
     }
 };
 
@@ -400,7 +435,7 @@ class msg_frame: public msg_header_frame{
             return 0;
         }
         this->pop_header(blob);
-        std::cout<<"pop body\n";
+        //std::cout<<"pop body\n";
         this->received=blob.pop<bool>();
         blob.pop_array<char>(this->text,MAX_TEXT);
         return 1;

@@ -6,15 +6,13 @@
 #include<ctime>
 // #include"crypto.hpp"
 
-#define KEK 24
-
+/// @brief block 8 bytes size
 class Word{
     private:
-    unsigned char data[8];
-    bool get_bit(int a){
-        int b=data[a/8];
-        b=b/static_cast<int>(pow(2,(7-a%8)))%2;
-        return b;
+    //bits operations (in order left to right)
+    const bool get_bit(int a){
+        unsigned char b=data[a/8];
+        return b&(128>>(a%8));
     }
     void set_bit(int a, bool b){
         if (b){
@@ -26,70 +24,66 @@ class Word{
     }
     
     public:
+    unsigned char data[8];
+
+    //constructors
     Word(){
-        int i;
+        char i;
         for(i=0;i<8;i++){
             data[i]=0;
         }
     }
     Word(char a[8]){
-        int i;
+        char i;
         for(i=0;i<8;i++){
             data[i]=a[i];
         }
     }
-    unsigned char get_byte(int a){
-        return(data[a]);
-    }
+    //bytes operations (from left to right)
+    // unsigned char get_byte(int a){
+    //     return(data[a]);
+    // }
     void set_byte(int a, char b){
         data[a]=b;
     }
+    //roll left with pushed out bits transition to right
     void rotate_left(int a){
         int i;
         Word buff;
         for(i=0;i<8;i++){
             buff.set_byte(i,data[i]);
-        }
+        }   
         for(i=a;i<64+a;i++){
             this->set_bit(i-a,buff.get_bit(i%64));
         }
         return;
     }
-    static Word plus(Word a, Word b){
+    //math operators
+    static Word plus(Word& a,Word& b){
         int i,s=0;
         Word c;
         for(i=7;i>=0;i--){
-            s=a.get_byte(i)+b.get_byte(i)+s;
+            s=a.data[i]+b.data[i]+s;
             c.set_byte(i,s%256);
-            if(s>=256){
-                s=1;
-            }
-            else{
-                s=0;
-            }
+            s=(s>=256);
         }
         return c;
     }
-    static Word minus(Word a, Word b){
+    static Word minus(Word& a,Word& b){
         int i,s=0;
         Word c;
         for(i=7;i>=0;i--){
-            s=256+a.get_byte(i)-b.get_byte(i)-s;
+            s=256+a.data[i]-b.data[i]-s;
             c.set_byte(i,s%256);
-            if(s>=256){
-                s=0;
-            }
-            else{
-                s=1;
-            }
+            s=(s<256);
         }
         return c;
     }
-    static Word wxor(Word a, Word b){
+    static Word wxor(Word& a, Word& b){
         int i;
         Word c;
         for(i=0;i<8;i++){
-            c.set_byte(i,a.get_byte(i)^b.get_byte(i));
+            c.set_byte(i,a.data[i]^b.data[i]);
         }
         return c;
     }
@@ -109,25 +103,26 @@ class Word{
 
 class Tweak{
     private:
-    Word data[3];
 
     public:
+    Word data[3];
     Tweak(char a[16]){
         int i;
         for(i=0;i<16;i++){
             data[i/8].set_byte(i%8,a[i]);
         }
-        data[3]=Word::wxor(data[0],data[1]);
+        data[2]=Word::wxor(data[0],data[1]);
     }
-    Word getWord(int a){
-        return data[a];
-    }
+    // Word getWord(int a){
+    //     return data[a];
+    // }
 };
 
 class Key{
     private:
-    Word data[19][4];
+    
     public:
+    Word data[19][4];
     Key(char key[32],Tweak b){
         int i;
         Word wk[4];
@@ -143,8 +138,8 @@ class Key{
         k[4]=Word::wxor(k[4],c240);
         for(i=0;i<19;i++){
             data[i][0]=k[i%5];
-            data[i][1]=Word::plus(k[i%5],b.getWord(i%3));
-            data[i][2]=Word::plus(k[i%5],b.getWord((i+1)%3));
+            data[i][1]=Word::plus(k[i%5],b.data[i%3]);
+            data[i][2]=Word::plus(k[i%5],b.data[(i+1)%3]);
             ws.set_byte(7,i);
             data[i][3]=Word::plus(k[i%5],ws);
         }
@@ -160,22 +155,22 @@ class Key{
         k[4]=Word::wxor(k[4],c240);
         for(i=0;i<19;i++){
             data[i][0]=k[i%5];
-            data[i][1]=Word::plus(k[i%5],b.getWord(i%3));
-            data[i][2]=Word::plus(k[i%5],b.getWord((i+1)%3));
+            data[i][1]=Word::plus(k[i%5],b.data[i%3]);
+            data[i][2]=Word::plus(k[i%5],b.data[(i+1)%3]);
             ws.set_byte(7,i);
             data[i][3]=Word::plus(k[i%5],ws);
         }
     }
-    Word getWord(int a,int b){
-        return data[a][b];
-    }
+    // Word getWord(int a,int b){
+    //     return data[a][b];
+    // }
 };
 
 class Block{
     private:
-    Word data[4];
 
     public:
+    Word data[4];
     Block(){
         int i;
         for(i=0;i<32;i++){
@@ -188,16 +183,16 @@ class Block{
             data[i/8].set_byte(i%8,a[i]);
         }
     }
-    Word getWord(int a){
-        return data[a];
-    }
+    // Word getWord(int a){
+    //     return data[a];
+    // }
     void setBlock(char a[32]){
         int i;
         for(i=0;i<32;i++){
             data[i/8].set_byte(i%8,a[i]);
         }
     }
-    void encrypt(Key key){
+    void encrypt(Key& key){
         int i,j;
         Word *pair;
         pair=(Word*)malloc(sizeof(Word)*2);
@@ -205,7 +200,7 @@ class Block{
             //step 1
             if(i%4==0){
                 for(j=0;j<4;j++){
-                    this->data[j]=Word::plus(this->data[j],key.getWord(i/4,j));
+                    this->data[j]=Word::plus(this->data[j],key.data[i/4][j]);
                 }
             }
             //step 2
@@ -220,7 +215,7 @@ class Block{
             this->data[3]=pair[0];
         }
     }
-    void decrypt(Key key){
+    void decrypt(Key& key){
         int i,j;
         Word *pair;
         pair=(Word*)malloc(sizeof(Word)*2);
@@ -238,12 +233,12 @@ class Block{
             //step 1
             if(i%4==0){
                 for(j=0;j<4;j++){
-                    this->data[j]=Word::minus(this->data[j],key.getWord(i/4,j));
+                    this->data[j]=Word::minus(this->data[j],key.data[i/4][j]);
                 }
             }
         }
     }
-    static Block bxor(Block a,Block b){
+    static Block bxor(Block& a,Block& b){
         int i;
         Block c;
         for(i=0;i<4;i++){
@@ -251,7 +246,7 @@ class Block{
         }
         return c;
     }
-    void clone(Block b){
+    void clone(Block& b){
         int i;
         for(i=0;i<4;i++){
             this->data[i]=b.data[i];
@@ -378,6 +373,12 @@ class Block{
 //     }
 // }
 
+/// @brief inserts number of items from src array to dst array with offset
+/// @tparam T type of items in arrays
+/// @param src src array
+/// @param dst dst array
+/// @param start where to put in dst array
+/// @param len how mutch to take from src array
 template<typename T>
 void insert(T* src, T* dst, size_t start, size_t len){
     size_t i;
@@ -386,6 +387,12 @@ void insert(T* src, T* dst, size_t start, size_t len){
     }
 }
 
+/// @brief cut number of items with offset from src array to dst array
+/// @tparam T type of items in arrays
+/// @param src src array
+/// @param dst dst array
+/// @param start from where to take in src
+/// @param len how mutch to put in dst array
 template<typename T>
 void cut(T* src, T* dst, size_t start, size_t len){
     size_t i;

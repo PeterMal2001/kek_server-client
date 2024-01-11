@@ -5,7 +5,13 @@
 #define MAX_INT64 18446744073709551616
 #define POLY 239
 
-void char_print(char* a, size_t len){
+inline void charcpy(char* dst, char* src, size_t len){
+    for(int i=0;i<len;i++){
+        dst[i]=src[i];
+    }
+}
+
+void charprint(char* a, size_t len){
     size_t i;
     std::cout<<"print:\n";
     for(i=0;i<len;i++){
@@ -121,7 +127,6 @@ class TFKey{
     }
     void operator=(const TFKey& b){
         //std::cout<<"start ="<<this<<"\n";
-        TFKey ret;
         u_int8_t i;
         for(i=0;i<4;i++){
             this->data[i]=b.data[i];
@@ -136,12 +141,11 @@ class TFKey{
         // std::cout<<"-b "<<b.data[3]<<" "<<b.data[2]<<" "<<b.data[1]<<" "<<b.data[0]<<" addr "<<&b<<"\n";  
         u_int8_t i,buff=0;
         for(i=0;i<4;i++){
+            ret.data[i]=this->data[i]-b.data[i]-buff;
             if((this->data[i]<b.data[i])||((this->data[i]==b.data[i])&&(buff))){
-                ret.data[i]=this->data[i]-b.data[i]-buff;
                 buff=1;
             }
             else{
-                ret.data[i]=this->data[i]-b.data[i]-buff;
                 buff=0;
             }
         }
@@ -156,7 +160,7 @@ class TFKey{
         u_int64_t buff=0;
         for(i=0;i<4;i++){
             ret.data[i]=b.data[i]+this->data[i]+buff;
-            if((!this->data[i])&&(b.data[i]!=-1)) buff=0;
+            if((!this->data[i])&&(buff==0));
             else if(-this->data[i]-buff>b.data[i]) buff=0;
             else buff=1;
         }
@@ -168,7 +172,7 @@ class TFKey{
         TFKey a=x,m=y;
         // std::cout<<"a "<<a.get_data(3)<<" "<<a.get_data(2)<<" "<<a.get_data(1)<<" "<<a.get_data(0)<<"\n";  
         if(m>a) return a;
-        u_int8_t lm=0,buff;
+        u_int8_t lm=0;
         int16_t i,j;
         u_int64_t one=1,nb;
         TFKey b;
@@ -239,7 +243,7 @@ class TFKey{
             b=buff;
         }
         TFKey ret;
-        int i,j,l=0;
+        int i,j;
         for(i=0;i<4;i++){
             if(!a.data[i]){
                 // std::cout<<"zero data\n";
@@ -325,7 +329,7 @@ TFKey make_crc(char* data, size_t size){
             if(poly&1){
                 crc=TFKey::sum_mod(crc,TFKey::pow_mod(buf,TFKey(0,0,0,j),kmod),kmod);
             }
-            poly>>1;
+            poly=poly>>1;
             // crc.print("tail_crc");
         }
     }
@@ -333,18 +337,53 @@ TFKey make_crc(char* data, size_t size){
 }
 
 class CryptedStruct{
+    private:
+    bool is_allocated;
     public:
     char *data;
     size_t size;
     CryptedStruct(size_t size){
         this->size=size;
         this->data=new char[size];
+        this->is_allocated=true;
     }
-    CryptedStruct(){}
+    CryptedStruct(){
+        this->is_allocated=false;
+    }
+    CryptedStruct(const CryptedStruct &b){
+        this->is_allocated=b.is_allocated;
+        if(this->is_allocated){
+            this->size=b.size;
+            this->data=new char[this->size];
+            charcpy(this->data,b.data,this->size);
+        }
+        // this->print("after lol");
+    }
+    void operator=(const CryptedStruct &b){
+        // std::cout<<"kek\n";
+        if(this->is_allocated){
+            delete[] this->data;
+        }
+        this->is_allocated=b.is_allocated;
+        if(this->is_allocated){
+            this->size=b.size;
+            this->data=new char[this->size];
+            charcpy(this->data,b.data,this->size);
+        }
+    }
+    ~CryptedStruct(){
+        if (this->is_allocated){
+            delete[] this->data;
+        }
+        this->size=0;
+    }
+    void print(const char* name){
+        std::cout<<name<<" is_allocated "<<this->is_allocated<<" size "<<this->size<<"\n";
+    }
 };
 
 template<typename T>
-CryptedStruct TF_encrypt(T *src,size_t size, TFKey k){
+CryptedStruct TF_encrypt(T *src,size_t size,TFKey& k){
     char t[16]={(char)69,'l','e','t','n','o','n','e','s','u','r','v','i','v','e',(char)228};
     char starter[32],c[32],*csrc;
     csrc=(char*)src;
@@ -386,7 +425,7 @@ CryptedStruct TF_encrypt(T *src,size_t size, TFKey k){
     kek.encrypt(key);
     prev.clone(kek);
     for(i=0;i<32;i++){
-        c[i]=kek.getWord(i/8).get_byte(i%8);
+        c[i]=kek.data[i/8].data[i%8];
     }
     insert<char>(c,dst.data,cur_dst,32);
     cur_dst+=32;
@@ -399,7 +438,7 @@ CryptedStruct TF_encrypt(T *src,size_t size, TFKey k){
         kek.encrypt(key);
         prev.clone(kek);
         for(i=0;i<32;i++){
-            c[i]=kek.getWord(i/8).get_byte(i%8);
+            c[i]=kek.data[i/8].data[i%8];
         }
         insert<char>(c,dst.data,cur_dst,32);
         cur_dst+=32;
@@ -408,9 +447,10 @@ CryptedStruct TF_encrypt(T *src,size_t size, TFKey k){
 }
 
 template<typename T>
-T* TF_decrypt(CryptedStruct src, TFKey k){
+T* TF_decrypt(CryptedStruct src, TFKey& k){
     char t[16]={(char)69,'l','e','t','n','o','n','e','s','u','r','v','i','v','e',(char)228};
     char c[32],*cdst;
+    // src.print("src");
     int i;
     cdst=new char[src.size];
     Tweak twek(t);
@@ -444,7 +484,7 @@ T* TF_decrypt(CryptedStruct src, TFKey k){
     kek=Block::bxor(kek,prev);
     prev.clone(buff);
     for(i=0;i<32;i++){
-        c[i]=kek.getWord(i/8).get_byte(i%8);
+        c[i]=kek.data[i/8].data[i%8];
         // std::cout<<"("<<(int)c[i]<<")";
     }
     // std::cout<<"\n";
@@ -470,16 +510,10 @@ T* TF_decrypt(CryptedStruct src, TFKey k){
         kek=Block::bxor(kek,prev);
         prev.clone(buff);
         for(i=0;i<32;i++){
-            c[i]=kek.getWord(i/8).get_byte(i%8);
+            c[i]=kek.data[i/8].data[i%8];
         }
         insert<char>(c,cdst,cur_dst,32);
         cur_dst+=32;
     }
     return (T*)cdst;
-}
-
-inline void charcpy(char* dst, char* src, size_t len){
-    for(int i=0;i<len;i++){
-        dst[i]=src[i];
-    }
 }
